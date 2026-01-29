@@ -4,6 +4,9 @@ weight: 3
 ---
 
 ---
+## Version 1.3.2
+
+- Fix wandb logging issue in MAGRPOTrainer
 
 ## Version 1.3.1
 
