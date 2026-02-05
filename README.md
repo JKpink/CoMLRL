@@ -48,10 +48,10 @@ pip install -e .
 ## Features
 
 - **MARL trainers to optimize LLM collaboration:**
-  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py).
+  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Aligned individual response joint with `joint_mode='align'`.
     - Memory-efficient cross joint with `joint_mode='cross'`.
-  - **_Multi-Agent Actor-Critic:_** Critic-based policy gradient methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maac.py).
+  - **_Multi-Agent Actor-Critic:_** Critic-based policy gradient methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
 
@@ -76,7 +76,7 @@ Quick start by training 2 `Qwen-2.5` agents to summarize Reddit posts with MAGRP
 ```python
 from datasets import load_dataset
 from transformers import AutoTokenizer
-from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 # Load dataset and tokenizer
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
@@ -91,7 +91,6 @@ trainer = MAGRPOTrainer(
     reward_func=lambda a, b: [abs(max(len(b[0]), 1) / max(len(a[0]), 1) - 3.0)],
     formatters=[lambda example: example["prompt"]] * 2,
     args=MAGRPOConfig(
-        per_device_train_batch_size=1,
     ),
 )
 trainer.train()

@@ -5,7 +5,7 @@ from typing import List
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from comlrl.trainers.iac import IACConfig, IACTrainer
+from comlrl.trainers.actor_critic import IACConfig, IACTrainer
 
 
 def dual_length_reward(
@@ -138,7 +138,6 @@ def main() -> None:
     dataset = dataset.select(range(usable))
 
     config = IACConfig(
-        output_dir=args.output_dir,
         num_train_epochs=args.num_train_epochs,
         actor_learning_rate=args.actor_learning_rate,
         critic_learning_rate=args.critic_learning_rate,

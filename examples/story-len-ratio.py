@@ -7,7 +7,7 @@ from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from comlrl.utils.reward_processor import RewardProcessors
-from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 
 def proper_length_ratio_reward(
@@ -44,12 +44,9 @@ def example_usage():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     config = MAGRPOConfig(
-        output_dir="./magrpo_multi_reward_output",
         num_train_epochs=3,
-        per_device_train_batch_size=1,
         learning_rate=5e-5,
         logging_steps=10,
-        save_steps=100,
         num_generations=8,
         max_new_tokens=128,
     )
