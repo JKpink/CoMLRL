@@ -47,25 +47,26 @@ pip install -e .
 
 ## Features
 
-- **MARL trainers to optimize LLM collaboration:**
+- **Cooperative MARL trainers to optimize decentralized LLM collaboration:**
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
-    - Aligned individual response joint with `joint_mode='align'`.
+    - Aligned individual response joint with `joint_mode='aligned'`.
     - Memory-efficient cross joint with `joint_mode='cross'`.
-  - **_Multi-Agent Actor-Critic:_** Critic-based policy gradient methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
+  - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
 
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
-  - [**_Writing Collaboration_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
+  - [**_Writing_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
     - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
     - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
-  - [**_Code Generation_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
+  - [**_Coding_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
     - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
-    - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
+    - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems.
     - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
-  - [**_Code Completion_**](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
-    - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
-
+    - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on attributes and docstrings.
+  - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
+    - StrBuilding - Building structures based on string blueprints.
+    - HouseBuilding - Constructing houses from given blueprints while defending against spider attacks.
 
 <img src="docs/assets/demo.gif" width="600px;" alt=""/>
 
@@ -115,16 +116,20 @@ Thanks to the gracious help of contributors:
 
 ## Citation
 
-Please cite our paper if you find this library useful in your research:
+Please cite the following papers if you find this library useful in your research:
 
 ```bibtex
-@misc{liu2025comlrl,
-      title={LLM Collaboration With Multi-Agent Reinforcement Learning},
-      author={Shuo Liu and Tianle Chen and Zeyu Liang and Xueguang Lyu and Christopher Amato},
-      year={2025},
-      eprint={2508.04652},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2508.04652},
+@inproceedings{liu2025llmcollabmarl,
+  title     = {{LLM} Collaboration With Multi-Agent Reinforcement Learning},
+  author    = {Liu, Shuo and Liang, Zeyu and Lyu, Xueguang and Amato, Christopher},
+  booktitle = {Proceedings of the 40th Annual AAAI Conference on Artificial Intelligence},
+  year      = {2026}
+}
+
+@article{liu2026learndecllmcollabmaac,
+  title   = {Learning Decentralized LLM Collaboration with Multi-Agent Actor Critic},
+  author  = {Liu, Shuo and Chen, Tianle and Amiri, Ryan and Amato, Christopher},
+  journal = {arXiv preprint arXiv:2601.21972},
+  year    = {2026}
 }
 ```
