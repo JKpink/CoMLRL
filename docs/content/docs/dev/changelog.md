@@ -4,6 +4,13 @@ weight: 3
 ---
 
 ---
+
+## Version 1.3.3
+- Compact MAREINFORCETrainer derivation, and move to the new folder.
+- Unify the interface for different trainers.
+- Remove redundant patches and wrappers.
+- Reorganize the variables in the config yamls.
+
 ## Version 1.3.2
 
 - Fix wandb logging issue in MAGRPOTrainer
