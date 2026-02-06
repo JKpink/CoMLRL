@@ -20,29 +20,20 @@
 
 ## Installation
 
-### Install from PyPI
+CoMLRL can be installed via PyPI, conda-forge, or from source:
 
 ```bash
+# Install from PyPI
 pip install comlrl
-# install PyTorch compatible with your device
-```
 
-### Install from conda-forge
-
-```bash
+# Install from conda-forge
 conda install -c conda-forge comlrl
-# install PyTorch compatible with your device
-```
 
-### Install from source
-
-To access the latest features, you can install CoMLRL from source:
-
-```bash
+# Install from source
 git clone https://github.com/OpenMLRL/CoMLRL.git
-cd CoMLRL
-pip install -e .
-# install PyTorch compatible with your device
+cd CoMLRL && pip install -e .
+
+# Install Compatible PyTorch
 ```
 
 ## Features
@@ -72,7 +63,7 @@ pip install -e .
 
 ## Usage
 
-Quick start by training 2 `Qwen-2.5` agents to summarize Reddit posts with MAGRPO:
+Quick start by training 2 `Qwen-2.5` to summarize Reddit posts with MAGRPO:
 
 ```python
 from datasets import load_dataset
@@ -99,9 +90,10 @@ trainer.train()
 
 ## Contributing
 
-We welcome contributions from the community! Please see [contributing guidelines](./CONTRIBUTING.md) on setting up a development environment and contribute.
+We welcome contributions from the community, see [contributing guidelines](./CONTRIBUTING.md) on setting up a developer environment.
 
-Thanks to the gracious help of contributors:
+We thank the gracious help of all contributors:
+
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <table>
   <tr>
@@ -113,6 +105,12 @@ Thanks to the gracious help of contributors:
 </table>
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 <sub>🤔: Foundational Ideas; 🚧: Maintenance; 💻: Code; 📖: Documentation; 🐛: Bug Report.</sub>
+
+## Sponsorship
+
+CoMLRL was developed using large-scale computational resources, with generous support from the following organizations and institutions:
+
+<img src="docs/assets/sponsors.jpg" width="600px;" alt=""/>
 
 ## Citation
 
