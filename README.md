@@ -90,8 +90,6 @@ trainer.train()
 
 ## Contributing
 
-We welcome contributions from the community, see [contributing guidelines](./CONTRIBUTING.md) on setting up a developer environment.
-
 We thank the gracious help of all contributors:
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
@@ -106,11 +104,15 @@ We thank the gracious help of all contributors:
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 <sub>🤔: Foundational Ideas; 🚧: Maintenance; 💻: Code; 📖: Documentation; 🐛: Bug Report.</sub>
 
+For new contributors, please see [contributing guidelines](./CONTRIBUTING.md) on setting up a dev environment.
+
 ## Sponsorship
 
-CoMLRL was developed using large-scale computational resources, with generous support from the following organizations and institutions:
+CoMLRL was developed using substantial computational resources. Its growth has been made possible by the generous support of the following organizations and institutions.
 
 <img src="docs/assets/sponsors.jpg" width="700px;" alt=""/>
+
+We welcome computational sponsorship to support the continued development of CoMLRL. If you are interested in sponsoring this project, please contact us. <a href="liu.shuo2@northeastern.edu"><img src="docs/assets/email.svg" width="20px;" alt=""/></a>
 
 ## Citation
 
