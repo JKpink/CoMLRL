@@ -110,7 +110,7 @@ We thank the gracious help of all contributors:
 
 CoMLRL was developed using large-scale computational resources, with generous support from the following organizations and institutions:
 
-<img src="docs/assets/sponsors.jpg" width="600px;" alt=""/>
+<img src="docs/assets/sponsors.jpg" width="700px;" alt=""/>
 
 ## Citation
 
