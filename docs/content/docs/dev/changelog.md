@@ -5,6 +5,16 @@ weight: 3
 
 ---
 
+## Version 1.3.4
+
+- Fix the bug of loading heterogeneous models and reform the loading logics.
+- Enable MBGD in MAGRPO to align with MAAC and IAC.
+- Remove redundant and legacy hyperparameters (e.g., model kwargs, patching hyperparameters).
+- Clean multi-device legacy, like drop last and num_workers.
+- Add unit tests for model loading and separate it from CI as a badge.
+- Clean short functions.
+- Reorganize the docs and align the parameters.
+
 ## Version 1.3.3
 - Compact MAREINFORCETrainer derivation, and move to the new folder.
 - Unify the interface for different trainers.
