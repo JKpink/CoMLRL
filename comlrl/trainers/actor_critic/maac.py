@@ -112,8 +112,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise ValueError("A callable reward_func must be provided.")
         if model is None and agents is None:
             raise ValueError("Either model or agents must be provided.")
-        if model is not None and agents is not None:
-            raise ValueError("Cannot provide both model and agents parameters.")
         self.args = args if args is not None else MAACConfig()
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
@@ -123,8 +121,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.model_config = model_config or {}
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if not torch.cuda.is_available():
-            print("Warning: CUDA not available. Training will run on CPU.")
 
         if agents is not None and tokenizer is None:
             raise ValueError("Tokenizer must be provided when agents are passed.")

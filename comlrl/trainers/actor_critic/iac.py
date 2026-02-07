@@ -136,8 +136,6 @@ class IACTrainer(ActorCriticTrainerBase):
             raise ValueError("A callable reward_func must be provided.")
         if model is None and agents is None:
             raise ValueError("Either model or agents must be provided.")
-        if model is not None and agents is not None:
-            raise ValueError("Cannot provide both model and agents parameters.")
 
         self.args = args if args is not None else IACConfig()
         if not self.args.use_separate_critic and critics is not None:
@@ -153,9 +151,6 @@ class IACTrainer(ActorCriticTrainerBase):
         self.critic_type = (self.args.critic_type or "v").lower()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if not torch.cuda.is_available():
-            # CPU fallback is allowed for experimentation but will be slow.
-            print("Warning: CUDA not available. Training will run on CPU.")
 
         self.agent_models: List[CausalLMWithValueHead] = []
         self.critic_models: List[Optional[CausalLMWithValueHead]] = []
@@ -191,7 +186,6 @@ class IACTrainer(ActorCriticTrainerBase):
             models=agents,
             expected_count=self.args.num_agents,
         )
-
         for actor_source in actor_sources:
             agent_model = self._load_agent_model(actor_source)
             agent_model.to(self.device)
