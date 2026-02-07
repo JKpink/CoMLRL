@@ -13,6 +13,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from comlrl.utils.formatters import build_formatters
+from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
+from comlrl.utils.reward_utils import call_reward_function
+from comlrl.utils.tokenizer_utils import (
+    apply_tokenizer_specials,
+    ensure_pad_token,
+    ensure_tokenizer,
+)
+
 
 @dataclass
 class MAGRPOConfig:
@@ -126,7 +135,7 @@ class MAGRPOTrainer:
         dataset_type: Optional[str] = None,
         reward_func: Optional[Callable] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
-        formatters: Optional[Union[Callable, List[Callable]]] = None,
+        formatters: Optional[Union[Callable, Sequence[Callable]]] = None,
         external_transition: Optional[Callable] = None,
         # Logging/eval
         wandb_config: Optional[Dict[str, Any]] = None,
@@ -136,90 +145,69 @@ class MAGRPOTrainer:
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided")
-        agents_is_name_list = (
-            agents is not None
-            and isinstance(agents, Sequence)
-            and not isinstance(agents, (str, bytes))
-            and all(isinstance(src, str) for src in agents)
-        )
-        if model is not None and agents is not None:
-            if not agents_is_name_list or len(agents) != num_agents:
-                raise ValueError(
-                    "Cannot provide both model and agents unless agents is a list of num_agents model names."
-                )
-
         self.args = args if args is not None else self.default_config_cls()
+        if model is None and agents is None:
+            raise ValueError("Either model or agents must be provided.")
+        if agents is None and model is not None and not isinstance(model, str):
+            raise ValueError("Model should be a string to create homogeneous agents")
         self.env_step = 0
         self._last_train_log_step = -1
         self.advantage_mode = getattr(self.args, "advantage_mode", "mean")
         if str(self.advantage_mode).lower() not in {"mean", "raw", "max", "rloo"}:
             raise ValueError("advantage_mode must be one of: mean, raw, max, rloo.")
 
-        self._setup_formatters(formatters, num_agents)
-        self._setup_reward_function(reward_func, reward_processor)
+        self.formatters = build_formatters(
+            formatters, num_agents, pass_none_external_prompts=False
+        )
+        if reward_func is None or not callable(reward_func):
+            raise ValueError("reward_func must be a callable.")
+        self.reward_func = reward_func
+        self.reward_processor = (
+            reward_processor if reward_processor is not None else (lambda x: x)
+        )
 
         self.model_config = model_config if model_config else {}
-        model_kwargs = {}
-        torch_dtype = None
-        if isinstance(self.model_config, dict):
-            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
-                "dtype"
-            )
-        if torch_dtype is not None:
-            model_kwargs["torch_dtype"] = torch_dtype
+        expected_count = num_agents
+        if agents is not None and model is None:
+            expected_count = len(agents)
 
-        if agents is not None:
-            if agents_is_name_list:
-                from transformers import AutoModelForCausalLM, AutoTokenizer
+        actor_sources, model_name = resolve_model_sources(
+            kind="agents",
+            model=model,
+            models=agents,
+            expected_count=expected_count,
+            expected_label=f"num_agents ({expected_count})",
+        )
+        if actor_sources and not all(isinstance(src, str) for src in actor_sources):
+            model_name = infer_model_name(actor_sources[0])
 
-                self.agents = [
-                    AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
-                    for name in agents
-                ]
-                self.num_agents = len(agents)
-                self.model_name = agents[0]
-                if tokenizer is None:
-                    self.tokenizer = AutoTokenizer.from_pretrained(agents[0])
-                    special_tokens = self.model_config.get("special_tokens", {})
-                    if special_tokens:
-                        self.tokenizer.add_special_tokens(special_tokens)
-            else:
-                self.agents = agents
-                self.num_agents = len(agents)
-                if (
-                    hasattr(agents[0], "base_model")
-                    and hasattr(agents[0].base_model, "config")
-                    and hasattr(agents[0].base_model.config, "model_type")
-                ):
-                    self.model_name = agents[0].base_model.config.model_type
-                elif hasattr(agents[0], "config") and hasattr(
-                    agents[0].config, "_name_or_path"
-                ):
-                    self.model_name = agents[0].config._name_or_path
-                else:
-                    self.model_name = agents[0].__class__.__name__
+        self.num_agents = expected_count
+        self.model_name = model_name
+        if actor_sources and all(isinstance(src, str) for src in actor_sources):
+            from transformers import AutoModelForCausalLM
+
+            model_kwargs = {}
+            torch_dtype = None
+            if isinstance(self.model_config, dict):
+                torch_dtype = self.model_config.get(
+                    "torch_dtype"
+                ) or self.model_config.get("dtype")
+            if torch_dtype is not None:
+                model_kwargs["torch_dtype"] = torch_dtype
+            self.agents = [
+                AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
+                for name in actor_sources
+            ]
         else:
-            self.num_agents = num_agents
-            if isinstance(model, str):
-                from transformers import AutoModelForCausalLM, AutoTokenizer
+            self.agents = list(actor_sources)
 
-                self.agents = [
-                    AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
-                    for _ in range(num_agents)
-                ]
-                self.model_name = model
-
-                if tokenizer is None:
-                    self.tokenizer = AutoTokenizer.from_pretrained(model)
-                    special_tokens = self.model_config.get("special_tokens", {})
-                    if special_tokens:
-                        self.tokenizer.add_special_tokens(special_tokens)
-            else:
-                raise ValueError(
-                    "Model should be a string to create homogeneous agents"
-                )
+        if tokenizer is not None:
+            self.tokenizer = ensure_pad_token(tokenizer)
+        elif actor_sources and all(isinstance(src, str) for src in actor_sources):
+            self.tokenizer = ensure_tokenizer(actor_sources[0], None)
+            special_tokens = self.model_config.get("special_tokens", {})
+            if special_tokens:
+                self.tokenizer.add_special_tokens(special_tokens)
 
         # Allow single-agent as a special case (GRPO)
         if self.num_agents < 1:
@@ -239,14 +227,10 @@ class MAGRPOTrainer:
 
         # Check for external_transition requirement in multi-turn training
         if self.args.num_turns > 1 and external_transition is None:
-            raise ValueError(
-                "Multi-turn training requires an external_transition function."
-            )
+            raise ValueError("Multi-turn MAGRPO requires an external_transition.")
 
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
-        if tokenizer is not None:
-            self.tokenizer = tokenizer
 
         self.eval_logger = eval_logger
         self.eval_aggregator = eval_aggregator
@@ -285,70 +269,6 @@ class MAGRPOTrainer:
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
-
-    def _setup_formatters(self, formatters, num_agents):
-        """Set up format functions for each agent that can handle external transitions."""
-        # Use multi-turn compatible default formatter that accepts external prompts
-        default_format_func = lambda x, external_prompts=None: (
-            external_prompts if external_prompts is not None else x.get("prompt", "")
-        )
-
-        if formatters is None:
-            # Just use the default formatter for all agents
-            self.formatters = [default_format_func] * num_agents
-        elif callable(formatters) and not isinstance(formatters, list):
-            # We have a single formatter and we should apply it to all agents
-            # Wrap the formatter to accept external_prompts parameter
-            original_formatter = formatters
-            sig = inspect.signature(original_formatter)
-            if "external_prompts" in sig.parameters:
-                wrapped_formatter = lambda x, external_prompts=None: (
-                    original_formatter(x, external_prompts=external_prompts)
-                    if external_prompts is not None
-                    else original_formatter(x)
-                )
-            else:
-                wrapped_formatter = lambda x, external_prompts=None: original_formatter(
-                    x
-                )
-            self.formatters = [wrapped_formatter] * num_agents
-        elif isinstance(formatters, list):
-            # We have a list of formatters and we should apply them to all agents
-            if len(formatters) != num_agents:
-                raise ValueError(
-                    f"Number of formatters ({len(formatters)}) must match "
-                    f"number of agents ({num_agents})"
-                )
-            # Ensure all formatters can accept external_prompts
-            wrapped_formatters = []
-            for formatter in formatters:
-                sig = inspect.signature(formatter)
-                if "external_prompts" in sig.parameters:
-                    wrapped = lambda x, external_prompts=None, f=formatter: f(
-                        x, external_prompts=external_prompts
-                    )
-                    wrapped_formatters.append(wrapped)
-                else:
-                    # Wrap to accept but ignore parameter
-                    wrapped = lambda x, external_prompts=None, f=formatter: f(x)
-                    wrapped_formatters.append(wrapped)
-            self.formatters = wrapped_formatters
-        else:
-            raise ValueError(
-                f"formatters must be a callable, a list of callables, or None. "
-                f"Got {type(formatters)}"
-            )
-
-    def _setup_reward_function(self, reward_func, reward_processor=None):
-        """Set up a single reward function with an optional processor."""
-        if reward_func is None or not callable(reward_func):
-            raise ValueError(
-                "reward_func must be a callable that returns a list of floats"
-            )
-        self.reward_func = reward_func
-        self.reward_processor = (
-            reward_processor if reward_processor is not None else (lambda x: x)
-        )
 
     def _init_wandb(self):
         """Initialize Weights & Biases for tracking with multi-turn config."""
@@ -535,10 +455,8 @@ class MAGRPOTrainer:
                 if seen >= num_eval_samples:
                     break
 
-        # Prepare extra metrics to pass into logging after computing returns/components
         extra_eval_metrics: Dict[str, Any] = {}
 
-        # Compute eval returns per turn and add to extra metrics
         n_turns = self.args.num_turns
         if n_turns > 0 and eval_turn_rewards and eval_turn_rewards[0]:
             n_samp = len(eval_turn_rewards[0])
@@ -1138,23 +1056,11 @@ class MAGRPOTrainer:
                     format_func(item, external_prompts=ext)
                     for item, ext in zip(batch_items, external_list)
                 ]
-        # batch_size is always 1 due to enforced constraint
-
         # Ensure tokenizer exists
         if self.tokenizer is None:
             raise ValueError("Tokenizer is required for generating completions")
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        if self.tokenizer.pad_token_id is None:
-            raise ValueError("Tokenizer must expose pad_token_id.")
+        apply_tokenizer_specials(self.tokenizer, [agent])
         pad_id = self.tokenizer.pad_token_id
-        eos_id = self.tokenizer.eos_token_id or pad_id
-        if hasattr(agent, "config"):
-            agent.config.pad_token_id = pad_id
-            agent.config.eos_token_id = eos_id
-        elif hasattr(agent, "model") and hasattr(agent.model, "config"):
-            agent.model.config.pad_token_id = pad_id
-            agent.model.config.eos_token_id = eos_id
 
         # Tokenize prompts
         prompt_encodings = self.tokenizer(
@@ -1358,7 +1264,7 @@ class MAGRPOTrainer:
         Compute rewards using a single reward function and optional processor.
 
         Args:
-            prompts: List of prompts (unused by default, passed via batch_items to reward_fn)
+            prompts: List of prompts (passed via batch_items to reward_fn if needed)
             completions_list: List of completions from each agent
 
         Returns:
@@ -1367,8 +1273,6 @@ class MAGRPOTrainer:
         # Initialize list to store rewards
         all_rewards = []
 
-        # Single prompt case (batch_size=1 enforced)
-        # Ensure correct structure for all agents
         for i in range(self.num_agents):
             if not isinstance(completions_list[i], list):
                 completions_list[i] = (
@@ -1377,33 +1281,30 @@ class MAGRPOTrainer:
                     else completions_list[i]
                 )
 
-        # Find minimum number of completions across all agents
         min_completions = min(len(completions_list[i]) for i in range(self.num_agents))
+        try:
+            reward_signature = inspect.signature(self.reward_func)
+        except (TypeError, ValueError):
+            reward_signature = None
 
         for completion_idx in range(min_completions):
-            # Extract one completion from each agent
             agent_completions = [
                 completions_list[agent_idx][completion_idx]
                 for agent_idx in range(self.num_agents)
             ]
 
-            # Call the single reward function
-            try:
-                completion_args = [[comp] for comp in agent_completions]
-                sig = inspect.signature(self.reward_func)
-                if "batch_items" in sig.parameters:
-                    func_rewards = self.reward_func(
-                        *completion_args, batch_items=batch_items
-                    )
-                else:
-                    func_rewards = self.reward_func(*completion_args)
-            except TypeError:
-                func_rewards = self.reward_func(agent_completions)
+            completion_args = [[comp] for comp in agent_completions]
+            func_rewards = call_reward_function(
+                self.reward_func,
+                prompts,
+                completion_args,
+                num_agents=self.num_agents,
+                batch_items=batch_items,
+                signature=reward_signature,
+            )
 
-            # Apply processor to rewards (single processor)
             processed_rewards = [self.reward_processor(r) for r in func_rewards]
 
-            # Take the processed reward for the chosen completion
             all_rewards.append(processed_rewards[0])
 
         return all_rewards
