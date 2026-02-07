@@ -20,8 +20,7 @@ class MAGRPOConfig:
 
     # Core setup
     num_train_epochs: int = 20
-    learning_rate: float = 5.0e-6
-    weight_decay: float = 0.0
+    agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
 
@@ -36,18 +35,16 @@ class MAGRPOConfig:
     num_turns: int = 2
     discount: float = 0.9
     joint_mode: str = "aligned"
-    termination_threshold: Optional[float] = -0.2
+    early_termination_threshold: Optional[float] = -0.2
     external_prompt_passthrough: bool = False
 
     eval_interval: int = 16
     eval_num_samples: int = 4
     eval_batch_size: int = 1
     rollout_buffer_size: int = 2
+    train_batch_size: Optional[int] = None
+    advantage_normalization: bool = True
     advantage_mode: str = "mean"
-
-    # DataLoader
-    dataloader_drop_last: bool = False
-    dataloader_num_workers: int = 0
 
     def __post_init__(self) -> None:
         if self.num_train_epochs < 1:
@@ -70,6 +67,10 @@ class MAGRPOConfig:
             raise ValueError("num_turns must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
+        if self.train_batch_size is None:
+            self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size < 1:
+            raise ValueError("train_batch_size must be >= 1.")
 
 
 @dataclass
@@ -177,18 +178,22 @@ class MAGRPOTrainer:
             if isinstance(model, str):
                 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+                model_kwargs = {}
+                torch_dtype = None
+                if isinstance(self.model_config, dict):
+                    torch_dtype = self.model_config.get(
+                        "torch_dtype"
+                    ) or self.model_config.get("dtype")
+                if torch_dtype is not None:
+                    model_kwargs["torch_dtype"] = torch_dtype
                 self.agents = [
-                    AutoModelForCausalLM.from_pretrained(
-                        model, **self.model_config.get("model_kwargs", {})
-                    )
+                    AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
                     for _ in range(num_agents)
                 ]
                 self.model_name = model
 
                 if tokenizer is None:
-                    self.tokenizer = AutoTokenizer.from_pretrained(
-                        model, **self.model_config.get("tokenizer_kwargs", {})
-                    )
+                    self.tokenizer = AutoTokenizer.from_pretrained(model)
                     special_tokens = self.model_config.get("special_tokens", {})
                     if special_tokens:
                         self.tokenizer.add_special_tokens(special_tokens)
@@ -231,8 +236,7 @@ class MAGRPOTrainer:
         self.optimizers = [
             torch.optim.AdamW(
                 agent.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
+                lr=self.args.agent_learning_rate,
             )
             for agent in self.agents
         ]
@@ -301,14 +305,10 @@ class MAGRPOTrainer:
             for formatter in formatters:
                 sig = inspect.signature(formatter)
                 if "external_prompts" in sig.parameters:
-
-                    def make_wrapper(f):
-                        def wrapped(x, external_prompts=None):
-                            return f(x, external_prompts=external_prompts)
-
-                        return wrapped
-
-                    wrapped_formatters.append(make_wrapper(formatter))
+                    wrapped = lambda x, external_prompts=None, f=formatter: f(
+                        x, external_prompts=external_prompts
+                    )
+                    wrapped_formatters.append(wrapped)
                 else:
                     # Wrap to accept but ignore parameter
                     wrapped = lambda x, external_prompts=None, f=formatter: f(x)
@@ -356,9 +356,8 @@ class MAGRPOTrainer:
                 "num_turns": self.args.num_turns,
                 "algorithm": self.algorithm_name,
                 "advantage_mode": self.advantage_mode,
-                # single reward function; keep legacy fields out
-                "learning_rate": self.args.learning_rate,
-                "weight_decay": self.args.weight_decay,
+                "advantage_normalization": self.args.advantage_normalization,
+                "agent_learning_rate": self.args.agent_learning_rate,
                 "num_train_epochs": self.args.num_train_epochs,
                 "num_generations": self.args.num_generations,
                 "max_new_tokens": self.args.max_new_tokens,
@@ -455,8 +454,8 @@ class MAGRPOTrainer:
             batch_size=1,
             collate_fn=lambda examples: examples,
             shuffle=False,
-            drop_last=self.args.dataloader_drop_last,
-            num_workers=self.args.dataloader_num_workers,
+            drop_last=False,
+            num_workers=0,
         )
 
     def get_eval_dataloader(self) -> Optional[DataLoader]:
@@ -470,7 +469,7 @@ class MAGRPOTrainer:
             collate_fn=lambda examples: examples,
             shuffle=False,
             drop_last=False,
-            num_workers=self.args.dataloader_num_workers,
+            num_workers=0,
         )
 
     def evaluate(self, num_eval_samples: int = 4) -> Dict[str, float]:
@@ -623,7 +622,6 @@ class MAGRPOTrainer:
                     num_return_sequences=1,
                     max_new_tokens=self.args.max_new_tokens,
                     external_prompts=agent_external_prompts[agent_idx],
-                    do_sample=True,
                 )
                 # Extract the completion directly
                 completion = agent_completions["completions"][0][0]
@@ -904,7 +902,7 @@ class MAGRPOTrainer:
             turn_node_counts[turn_idx] += 1
 
             # Early termination: stop expanding this branch if mean reward exceeds threshold
-            term_threshold = getattr(self.args, "termination_threshold", None)
+            term_threshold = getattr(self.args, "early_termination_threshold", None)
             terminate_here = False
             if term_threshold is not None and rewards_vec:
                 try:
@@ -1079,7 +1077,6 @@ class MAGRPOTrainer:
         max_new_tokens=128,
         prompts_override: Optional[List[str]] = None,
         external_prompts: Optional[Any] = None,
-        do_sample: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -1129,6 +1126,16 @@ class MAGRPOTrainer:
             raise ValueError("Tokenizer is required for generating completions")
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        if self.tokenizer.pad_token_id is None:
+            raise ValueError("Tokenizer must expose pad_token_id.")
+        pad_id = self.tokenizer.pad_token_id
+        eos_id = self.tokenizer.eos_token_id or pad_id
+        if hasattr(agent, "config"):
+            agent.config.pad_token_id = pad_id
+            agent.config.eos_token_id = eos_id
+        elif hasattr(agent, "model") and hasattr(agent.model, "config"):
+            agent.model.config.pad_token_id = pad_id
+            agent.model.config.eos_token_id = eos_id
 
         # Tokenize prompts
         prompt_encodings = self.tokenizer(
@@ -1161,46 +1168,21 @@ class MAGRPOTrainer:
                 "return_dict_in_generate": True,
             }
 
-            # If requesting multiple sequences, use sampling for diversity
             top_k = getattr(self.args, "top_k", None)
-            if do_sample is None and num_return_sequences > 1:
-                # Use generation parameters from config
-                generation_update = {
-                    "do_sample": True,  # Enable sampling for randomness
+            generation_kwargs.update(
+                {
+                    "do_sample": True,
                     "temperature": self.args.temperature,
                     "top_p": self.args.top_p,
-                    "num_beams": 1,  # Disable beam search when sampling
+                    "num_beams": 1,
                     "num_return_sequences": num_return_sequences,
                 }
-                if top_k is not None:
-                    generation_update["top_k"] = top_k
-                generation_kwargs.update(generation_update)
-            elif do_sample is not None:
-                generation_kwargs.update(
-                    {
-                        "do_sample": bool(do_sample),
-                        "num_beams": 1,
-                        "num_return_sequences": num_return_sequences,
-                    }
-                )
-                if do_sample:
-                    generation_kwargs.update(
-                        {
-                            "temperature": self.args.temperature,
-                            "top_p": self.args.top_p,
-                        }
-                    )
-                    if top_k is not None:
-                        generation_kwargs["top_k"] = top_k
-
-            # Set pad_token_id from tokenizer if not set
-            if (
-                "pad_token_id" not in generation_kwargs
-                or generation_kwargs["pad_token_id"] is None
-            ):
-                generation_kwargs["pad_token_id"] = self.tokenizer.pad_token_id
+            )
+            if top_k is not None:
+                generation_kwargs["top_k"] = top_k
 
             # Add any additional user-provided kwargs (these override model defaults)
+            kwargs.pop("do_sample", None)
             generation_kwargs.update(kwargs)
             generation_output = agent.generate(**generation_kwargs)
         except Exception as e:
@@ -1285,7 +1267,6 @@ class MAGRPOTrainer:
         num_return_sequences=1,
         max_new_tokens=128,
         external_prompts=None,
-        do_sample: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -1302,7 +1283,6 @@ class MAGRPOTrainer:
                 agent_idx=agent_idx,
                 num_return_sequences=num_return_sequences,
                 max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
                 external_prompts=external_prompts,
                 **kwargs,
             )
@@ -1318,7 +1298,6 @@ class MAGRPOTrainer:
                 num_return_sequences=num_return_sequences,
                 max_new_tokens=max_new_tokens,
                 prompts_override=prompts,
-                do_sample=do_sample,
                 external_prompts=external_prompts,
                 **kwargs,
             )
@@ -1338,7 +1317,6 @@ class MAGRPOTrainer:
             agent_idx=agent_idx,
             num_return_sequences=num_return_sequences,
             max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
             external_prompts=external_prompts,
             **kwargs,
         )
@@ -1472,16 +1450,21 @@ class MAGRPOTrainer:
         if not samples:
             return
         random.shuffle(samples)
-        self.optimizers[agent_idx].zero_grad()
-        scale = 1.0 / len(samples)
-        for sample in samples:
-            loss = self._compute_loss_with_gradients(
-                self.agents[agent_idx],
-                sample.completions_data,
-                sample.returns,
-            )
-            (loss * scale).backward()
-        self.optimizers[agent_idx].step()
+        batch_size = int(getattr(self.args, "train_batch_size", len(samples)) or 1)
+        for start in range(0, len(samples), batch_size):
+            batch = samples[start : start + batch_size]
+            if not batch:
+                continue
+            self.optimizers[agent_idx].zero_grad()
+            scale = 1.0 / len(batch)
+            for sample in batch:
+                loss = self._compute_loss_with_gradients(
+                    self.agents[agent_idx],
+                    sample.completions_data,
+                    sample.returns,
+                )
+                (loss * scale).backward()
+            self.optimizers[agent_idx].step()
 
     def _compute_advantages(self, returns_tensor: torch.Tensor) -> torch.Tensor:
         mode = str(self.advantage_mode or "mean").lower()
@@ -1521,6 +1504,10 @@ class MAGRPOTrainer:
         returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
         advantages = self._compute_advantages(returns_tensor)
+        if self.args.advantage_normalization and advantages.numel() > 1:
+            mean = advantages.mean()
+            std = advantages.std(unbiased=False).clamp(min=1e-6)
+            advantages = (advantages - mean) / std
 
         # Set agent to train mode to ensure gradients are tracked
         agent.train()

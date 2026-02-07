@@ -34,34 +34,33 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{% hint info %}}
 **MAGRPOConfig** provides parameters for both single-turn and multi-turn training:
 
-- `num_train_epochs`: Number of training epochs (default: 20)
-- `learning_rate`: Learning rate (default: 5e-6)
-- `weight_decay`: Weight decay (default: 0.0)
-- `logging_steps`: Log every N steps (default: 50)
 - `num_agents`: Number of agents (default: 2)
+- `num_turns`: Number of turns per episode; set >1 for multi-turn (default: 2)
+- `num_train_epochs`: Number of training epochs (default: 20)
+- `agent_learning_rate`: Learning rate (default: 5e-6)
+- `logging_steps`: Log every N steps (default: 50)
 - `num_generations`: Number of generations to sample per prompt for each agent (default: 4)
 - `max_new_tokens`: Maximum number of new tokens to generate (default: 256)
 - `temperature`: Temperature for sampling (default: 0.6)
 - `top_p`: Top-p for sampling (default: 0.6)
 - `top_k`: Top-k for sampling (default: 50)
-- `num_turns`: Number of turns per episode; set >1 for multi-turn (default: 2)
 - `discount`: Discount factor gamma over turns for returns (default: 0.9)
 - `joint_mode`: Joint action composition - `'aligned'` (index-aligned, default) or `'cross'` (Cartesian product)
-- `termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: -0.2)
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn (default: false)
+- `early_termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: -0.2)
 - `rollout_buffer_size`: Number of node samples to buffer before update (default: 2)
+- `train_batch_size`: Mini-batch size within each update (default: rollout_buffer_size)
+- `advantage_normalization`: Whether to normalize advantages within each prompt (default: true)
 - `eval_interval`: Run evaluation every N training batches (default: 16)
 - `eval_num_samples`: Number of samples to evaluate per evaluation run (default: 4)
 - `eval_batch_size`: Eval dataloader batch size (default: 1)
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn (default: false)
 - `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`) (default: mean)
-- `dataloader_drop_last`: Drop the last batch (default: false)
-- `dataloader_num_workers`: DataLoader worker count (default: 0)
 {{% /hint %}}
 
 {{% hint info %}}
-**MAGRPOTrainer** accepts either a model string/object for homogeneous agents or a list of `agents` for heterogeneous setups:
+**MAGRPOTrainer** accepts either a model string for homogeneous agents or a list of `agents` for heterogeneous setups:
 
-- `model` or `agents`: Model string/object for homogeneous agents, or list of agent models
+- `model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
 - `num_agents`: Number of agents (default: 2)
 - `tokenizer`: The tokenizer (required)
 - `train_dataset`: Training dataset (required)
@@ -78,11 +77,11 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{% /hint %}}
 
 {{% hint warning %}}
-For simplicity, MAGRPO computes the policy gradient using the current policy's samples without importance sampling or ratio clipping.
+For simplicity, MAGRPO computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. And since it does not use a critic model, there is no `value_clip_range` applicable.
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer uses a fixed training DataLoader batch size of 1 and requires at least 2 generations for group baseline computation.
+The trainer uses a fixed training DataLoader batch size of 1 and requires at least `num_generations=2` generations for group baseline computation. The training use batch gradient descent by default, where `train_batch_size`=`rollout_buffer_size`.
 {{% /hint %}}
 
 ## Other Variants

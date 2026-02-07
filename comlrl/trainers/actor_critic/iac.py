@@ -31,13 +31,8 @@ MetricsCallback = Callable[[List["RolloutSample"]], Dict[str, float]]
 class IACConfig:
     """Configuration container for Independent Actor-Critic fine-tuning."""
 
-    actor_learning_rate: float = 5e-6
+    agent_learning_rate: float = 5e-6
     critic_learning_rate: Optional[float] = 5e-6
-    weight_decay: float = 0.0
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
     value_clip_range: Optional[float] = 0.2
@@ -47,14 +42,11 @@ class IACConfig:
     temperature: float = 0.6
     top_p: float = 0.6
     top_k: Optional[int] = None
-    do_sample: bool = True
     num_train_epochs: int = 40
     use_separate_critic: bool = True
-    critic_model_name_or_path: Optional[str] = None
     critic_type: str = "v"  # "v" (V(h)) or "q" (Q(h,a))
     critic_value_head_hidden_dim: Optional[int] = None
     value_head_hidden_dim: Optional[int] = None
-    pad_token_id: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
     external_prompt_passthrough: bool = False
@@ -83,7 +75,7 @@ class IACConfig:
         if critic_type not in ("v", "q"):
             raise ValueError("critic_type must be one of: 'v', 'q'.")
         if self.critic_learning_rate is None:
-            self.critic_learning_rate = self.actor_learning_rate
+            self.critic_learning_rate = self.agent_learning_rate
         if self.num_generations < 1:
             raise ValueError("num_generations must be >= 1.")
         if self.eval_interval < 0:
@@ -133,11 +125,25 @@ class IACTrainer(ActorCriticTrainerBase):
         wandb_config: Optional[Dict[str, Any]] = None,
         metrics_callback: Optional[MetricsCallback] = None,
         external_transition: Optional[Callable] = None,
+        agents: Optional[
+            Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]
+        ] = None,
+        critics: Optional[
+            Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]
+        ] = None,
     ) -> None:
         if reward_func is None or not callable(reward_func):
             raise ValueError("A callable reward_func must be provided.")
+        if model is None and agents is None:
+            raise ValueError("Either model or agents must be provided.")
+        if model is not None and agents is not None:
+            raise ValueError("Cannot provide both model and agents parameters.")
 
         self.args = args if args is not None else IACConfig()
+        if not self.args.use_separate_critic and critics is not None:
+            raise ValueError(
+                "critics can only be provided when use_separate_critic=True."
+            )
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
@@ -151,26 +157,27 @@ class IACTrainer(ActorCriticTrainerBase):
             # CPU fallback is allowed for experimentation but will be slow.
             print("Warning: CUDA not available. Training will run on CPU.")
 
-        self.tokenizer = tokenizer
-        self.formatters = self._setup_formatters(formatters)
-        self._reward_signature = self._infer_reward_signature(reward_func)
-
-        self.actor_models: List[CausalLMWithValueHead] = []
+        self.agent_models: List[CausalLMWithValueHead] = []
         self.critic_models: List[Optional[CausalLMWithValueHead]] = []
 
-        self.tokenizer = self._ensure_tokenizer(model, self.tokenizer)
+        self.tokenizer = tokenizer
+        if agents is not None and self.tokenizer is None:
+            raise ValueError("Tokenizer must be provided when agents are passed.")
+        if agents is None:
+            self.tokenizer = self._ensure_tokenizer(model, self.tokenizer)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if self.tokenizer.pad_token_id is None:
             raise ValueError("Tokenizer must expose pad_token_id.")
 
-        self.args.pad_token_id = (
-            self.args.pad_token_id
-            if self.args.pad_token_id is not None
-            else self.tokenizer.pad_token_id
-        )
+        self.formatters = self._setup_formatters(formatters)
+        self._reward_signature = self._infer_reward_signature(reward_func)
 
-        if self.args.num_agents > 1 and isinstance(model, PreTrainedModel):
+        if (
+            agents is None
+            and self.args.num_agents > 1
+            and isinstance(model, PreTrainedModel)
+        ):
             raise ValueError(
                 "Multi-agent IAC requires `model` to be a pretrained identifier string."
             )
@@ -178,25 +185,32 @@ class IACTrainer(ActorCriticTrainerBase):
             raise ValueError("Multi-turn IAC requires an external_transition.")
         self.external_transition = external_transition
 
-        for _ in range(self.args.num_agents):
-            actor_model = self._load_actor_model(model)
-            actor_model.to(self.device)
-            self.actor_models.append(actor_model)
+        actor_sources, self.agent_model_name = self._resolve_model_sources(
+            kind="agents",
+            model=model,
+            models=agents,
+            expected_count=self.args.num_agents,
+        )
 
+        for actor_source in actor_sources:
+            agent_model = self._load_agent_model(actor_source)
+            agent_model.to(self.device)
+            self.agent_models.append(agent_model)
+
+        self.critic_model_name = None
         if self.args.use_separate_critic:
-            critic_identifier = self.args.critic_model_name_or_path or model
-            if critic_identifier is None:
+            if critics is None:
                 raise ValueError(
-                    "critic_model_name_or_path must be provided when using a separate critic."
+                    "critics must be provided when use_separate_critic=True."
                 )
-            if self.args.num_agents > 1 and isinstance(
-                critic_identifier, PreTrainedModel
-            ):
-                raise ValueError(
-                    "Multi-agent IAC requires string identifiers for separate critics."
-                )
-            for _ in range(self.args.num_agents):
-                critic_model = self._load_critic_model(critic_identifier)
+            critic_sources, self.critic_model_name = self._resolve_model_sources(
+                kind="critics",
+                model=None,
+                models=critics,
+                expected_count=self.args.num_agents,
+            )
+            for critic_source in critic_sources:
+                critic_model = self._load_critic_model(critic_source)
                 critic_model.to(self.device)
                 self.critic_models.append(critic_model)
         else:
@@ -204,31 +218,25 @@ class IACTrainer(ActorCriticTrainerBase):
 
         self._configure_tokenizer_specials()
 
-        self.actor_optimizers: List[torch.optim.Optimizer] = []
+        self.agent_optimizers: List[torch.optim.Optimizer] = []
         self.critic_optimizers: List[torch.optim.Optimizer] = []
 
-        for actor_model in self.actor_models:
+        for agent_model in self.agent_models:
             optimizer = torch.optim.AdamW(
-                actor_model.parameters(),
-                lr=self.args.actor_learning_rate,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-                weight_decay=self.args.weight_decay,
+                agent_model.parameters(),
+                lr=self.args.agent_learning_rate,
             )
-            self.actor_optimizers.append(optimizer)
+            self.agent_optimizers.append(optimizer)
 
         if self.args.use_separate_critic:
             for critic_model in self.critic_models:
                 if critic_model is None:
                     raise RuntimeError("Critic model expected but missing.")
-                optimizer = torch.optim.AdamW(
-                    critic_model.parameters(),
-                    lr=self.args.critic_learning_rate,
-                    betas=(self.args.adam_beta1, self.args.adam_beta2),
-                    eps=self.args.adam_epsilon,
-                    weight_decay=self.args.weight_decay,
-                )
-                self.critic_optimizers.append(optimizer)
+            optimizer = torch.optim.AdamW(
+                critic_model.parameters(),
+                lr=self.args.critic_learning_rate,
+            )
+            self.critic_optimizers.append(optimizer)
 
         self.env_step = 0
         self.rollout_buffers: List[List[RolloutSample]] = [
@@ -259,8 +267,7 @@ class IACTrainer(ActorCriticTrainerBase):
             raise ValueError(
                 "Tokenizer must be provided when model is a PreTrainedModel instance."
             )
-        tokenizer_kwargs = self.model_config.get("tokenizer_kwargs", {})
-        return AutoTokenizer.from_pretrained(model, **tokenizer_kwargs)
+        return AutoTokenizer.from_pretrained(model)
 
     def _infer_reward_signature(self, fn: RewardFunc):
         try:
@@ -268,17 +275,27 @@ class IACTrainer(ActorCriticTrainerBase):
         except (TypeError, ValueError):
             return None
 
-    def _load_actor_model(
-        self, model: Optional[Union[str, PreTrainedModel]]
+    def _load_agent_model(
+        self,
+        model: Optional[Union[str, PreTrainedModel, CausalLMWithValueHead]],
     ) -> CausalLMWithValueHead:
         if model is None:
             raise ValueError("A policy model identifier or instance is required.")
 
+        if isinstance(model, CausalLMWithValueHead):
+            return model
         if isinstance(model, PreTrainedModel):
             base_model = model
         else:
-            model_kwargs = self.model_config.get("model_kwargs", {})
-            base_model = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+            model_kwargs = self._filter_model_kwargs(
+                self.model_config.get("model_kwargs", {})
+            )
+            try:
+                base_model = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Failed to load actor model from identifier '{model}'."
+                ) from exc
 
         attach_value = not self.args.use_separate_critic
         return CausalLMWithValueHead(
@@ -288,15 +305,25 @@ class IACTrainer(ActorCriticTrainerBase):
         )
 
     def _load_critic_model(
-        self, model_identifier: Union[str, PreTrainedModel]
+        self,
+        model_identifier: Union[str, PreTrainedModel, CausalLMWithValueHead],
     ) -> CausalLMWithValueHead:
+        if isinstance(model_identifier, CausalLMWithValueHead):
+            return model_identifier
         if isinstance(model_identifier, PreTrainedModel):
             base_model = model_identifier
         else:
-            model_kwargs = self.model_config.get("critic_model_kwargs", {})
-            base_model = AutoModelForCausalLM.from_pretrained(
-                model_identifier, **model_kwargs
+            model_kwargs = self._filter_model_kwargs(
+                self.model_config.get("critic_model_kwargs", {})
             )
+            try:
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    model_identifier, **model_kwargs
+                )
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Failed to load critic model from identifier '{model_identifier}'."
+                ) from exc
 
         return CausalLMWithValueHead(
             base_model,
@@ -305,11 +332,11 @@ class IACTrainer(ActorCriticTrainerBase):
         )
 
     def _configure_tokenizer_specials(self) -> None:
-        pad_id = self.args.pad_token_id
-        eos_id = getattr(self.tokenizer, "eos_token_id", pad_id)
-        for actor_model in self.actor_models:
-            actor_model.model.config.pad_token_id = pad_id
-            actor_model.model.config.eos_token_id = eos_id
+        pad_id = self.tokenizer.pad_token_id
+        eos_id = self.tokenizer.eos_token_id or pad_id
+        for agent_model in self.agent_models:
+            agent_model.model.config.pad_token_id = pad_id
+            agent_model.model.config.eos_token_id = eos_id
         for critic_model in self.critic_models:
             if critic_model is None:
                 continue
@@ -338,7 +365,7 @@ class IACTrainer(ActorCriticTrainerBase):
             "algorithm": self.algorithm_name,
             "num_agents": self.args.num_agents,
             "num_turns": self.args.num_turns,
-            "actor_learning_rate": self.args.actor_learning_rate,
+            "agent_learning_rate": self.args.agent_learning_rate,
             "critic_learning_rate": self.args.critic_learning_rate,
             "rollout_buffer_size": self.args.rollout_buffer_size,
             "train_batch_size": self.args.train_batch_size,
@@ -534,7 +561,7 @@ class IACTrainer(ActorCriticTrainerBase):
     # Rollout collection
     def _generate_rollout(
         self,
-        actor_model: CausalLMWithValueHead,
+        agent_model: CausalLMWithValueHead,
         prompt: str,
         agent_idx: int,
         num_ret: int,
@@ -548,34 +575,28 @@ class IACTrainer(ActorCriticTrainerBase):
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,
             "max_new_tokens": self.args.max_new_tokens,
-            "do_sample": bool(self.args.do_sample),
+            "do_sample": True,
             "temperature": self.args.temperature,
             "top_p": self.args.top_p,
-            "pad_token_id": self.args.pad_token_id,
             "num_return_sequences": num_ret,
             "num_beams": 1,
         }
         if self.args.top_k is not None:
             generation_kwargs["top_k"] = self.args.top_k
 
-        sequences = actor_model.generate(**generation_kwargs)
+        sequences = agent_model.generate(**generation_kwargs)
         if sequences.size(1) <= prompt_len:
             raise RuntimeError("Model produced an empty completion during rollout.")
 
         response_tokens = sequences[:, prompt_len:]
-        pad_id = self.args.pad_token_id
+        pad_id = self.tokenizer.pad_token_id
         response_lens: List[int] = []
         completion_texts: List[str] = []
         for seq in response_tokens:
-            if pad_id is not None:
-                pad_positions = (seq == pad_id).nonzero(as_tuple=False)
-                resp_len = (
-                    pad_positions[0].item()
-                    if pad_positions.numel() > 0
-                    else seq.size(0)
-                )
-            else:
-                resp_len = seq.size(0)
+            pad_positions = (seq == pad_id).nonzero(as_tuple=False)
+            resp_len = (
+                pad_positions[0].item() if pad_positions.numel() > 0 else seq.size(0)
+            )
             response_lens.append(resp_len)
             completion_texts.append(
                 self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
@@ -597,7 +618,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 )
             else:
                 value = self._value_for_critic_type(
-                    actor_model,
+                    agent_model,
                     sequences,
                     full_attention_mask,
                     prompt_len,
@@ -607,7 +628,7 @@ class IACTrainer(ActorCriticTrainerBase):
         logprobs = []
         for seq, attn, resp_len in zip(sequences, full_attention_mask, response_lens):
             lp, _ = self._policy_eval(
-                actor_model,
+                agent_model,
                 seq.unsqueeze(0),
                 attn.unsqueeze(0),
                 prompt_len,
@@ -650,9 +671,9 @@ class IACTrainer(ActorCriticTrainerBase):
         rollout_data: List[Dict[str, Any]] = []
         num_ret = int(getattr(self.args, "num_generations", 1))
 
-        for agent_idx, actor_model in enumerate(self.actor_models):
+        for agent_idx, agent_model in enumerate(self.agent_models):
             prompt = self._resolve_turn_prompt(item, agent_idx)
-            gen = self._generate_rollout(actor_model, prompt, agent_idx, num_ret)
+            gen = self._generate_rollout(agent_model, prompt, agent_idx, num_ret)
             completions_per_agent.append(gen["completions"])
             rollout_data.append({"agent_idx": agent_idx, **gen})
             prompts.append(prompt)
@@ -752,9 +773,9 @@ class IACTrainer(ActorCriticTrainerBase):
 
             completions_per_agent: List[List[str]] = []
             rollout_data: List[Dict[str, Any]] = []
-            for agent_idx, actor_model in enumerate(self.actor_models):
+            for agent_idx, agent_model in enumerate(self.agent_models):
                 prompt = turn_prompts[agent_idx]
-                gen = self._generate_rollout(actor_model, prompt, agent_idx, num_ret=1)
+                gen = self._generate_rollout(agent_model, prompt, agent_idx, num_ret=1)
                 completions_per_agent.append(gen["completions"])
                 rollout_data.append({"agent_idx": agent_idx, **gen})
                 prompt_history[agent_idx].append(prompt)
@@ -834,7 +855,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
     def _policy_eval(
         self,
-        actor_model: CausalLMWithValueHead,
+        agent_model: CausalLMWithValueHead,
         sequences: torch.Tensor,
         attention_mask: torch.Tensor,
         prompt_len: int,
@@ -845,7 +866,7 @@ class IACTrainer(ActorCriticTrainerBase):
         Evaluate the actor to retrieve log-probabilities and (optional) value prediction.
         """
 
-        outputs = actor_model(
+        outputs = agent_model(
             input_ids=sequences,
             attention_mask=attention_mask,
             output_values=output_values,
@@ -859,7 +880,7 @@ class IACTrainer(ActorCriticTrainerBase):
         if output_values:
             # Use prompt-only values for V(h); use full sequence for Q(h,a).
             value = self._value_for_critic_type(
-                actor_model,
+                agent_model,
                 sequences,
                 attention_mask,
                 prompt_len,
@@ -974,11 +995,11 @@ class IACTrainer(ActorCriticTrainerBase):
 
     # Actor-Critic update logic
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
-        actor_model = self.actor_models[agent_idx]
+        agent_model = self.agent_models[agent_idx]
         critic_model = (
             self.critic_models[agent_idx] if self.args.use_separate_critic else None
         )
-        actor_optimizer = self.actor_optimizers[agent_idx]
+        agent_optimizer = self.agent_optimizers[agent_idx]
         critic_optimizer = (
             self.critic_optimizers[agent_idx] if self.args.use_separate_critic else None
         )
@@ -992,7 +1013,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
             # Policy log-prob uses full sequence; value uses prompt-only baseline.
             logprob, _ = self._policy_eval(
-                actor_model,
+                agent_model,
                 sequences,
                 attention_mask,
                 sample.prompt_len,
@@ -1011,7 +1032,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 )
             else:
                 value = self._value_for_critic_type(
-                    actor_model,
+                    agent_model,
                     sequences,
                     attention_mask,
                     sample.prompt_len,
@@ -1079,26 +1100,17 @@ class IACTrainer(ActorCriticTrainerBase):
         if self.args.use_separate_critic:
             if critic_optimizer is None:
                 raise RuntimeError("Critic optimizer missing.")
-            actor_optimizer.zero_grad()
+            agent_optimizer.zero_grad()
             actor_total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                actor_model.parameters(), self.args.max_grad_norm
-            )
-            actor_optimizer.step()
+            agent_optimizer.step()
 
             critic_optimizer.zero_grad()
             value_total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                critic_model.parameters(), self.args.max_grad_norm  # type: ignore[arg-type]
-            )
             critic_optimizer.step()
         else:
-            actor_optimizer.zero_grad()
+            agent_optimizer.zero_grad()
             (actor_total + value_total).backward()
-            torch.nn.utils.clip_grad_norm_(
-                actor_model.parameters(), self.args.max_grad_norm
-            )
-            actor_optimizer.step()
+            agent_optimizer.step()
 
         return {
             "policy_loss": actor_loss.detach().item(),
@@ -1142,7 +1154,7 @@ class IACTrainer(ActorCriticTrainerBase):
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
         if self.args.num_agents == 1:
-            actor = self.actor_models[0]
+            actor = self.agent_models[0]
             actor.model.save_pretrained(output_dir)
             if actor.value_head is not None:
                 torch.save(
@@ -1160,7 +1172,7 @@ class IACTrainer(ActorCriticTrainerBase):
                         os.path.join(critic_dir, "value_head.pt"),
                     )
         else:
-            for agent_idx, actor in enumerate(self.actor_models):
+            for agent_idx, actor in enumerate(self.agent_models):
                 agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
                 os.makedirs(agent_dir, exist_ok=True)
                 actor.model.save_pretrained(agent_dir)
@@ -1183,6 +1195,3 @@ class IACTrainer(ActorCriticTrainerBase):
 
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
-
-    def _include_value_target_fallback(self) -> bool:
-        return False

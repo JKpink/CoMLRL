@@ -39,7 +39,7 @@ cd CoMLRL && pip install -e .
 ## Features
 
 - **Cooperative MARL trainers to optimize decentralized LLM collaboration:**
-  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
+  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Aligned individual response joint with `joint_mode='aligned'`.
     - Memory-efficient cross joint with `joint_mode='cross'`.
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
@@ -56,8 +56,8 @@ cd CoMLRL && pip install -e .
     - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
     - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on attributes and docstrings.
   - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
-    - StrBuilding - Building structures based on string blueprints.
-    - HouseBuilding - Constructing houses from given blueprints while defending against spider attacks.
+    - [StrBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/str_build) - Building structures based on string blueprints.
+    - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
 
 <img src="docs/assets/demo.gif" width="600px;" alt=""/>
 
@@ -111,7 +111,7 @@ For new contributors, please see [contributing guidelines](./CONTRIBUTING.md) on
 
 CoMLRL was developed using substantial computational resources. Its growth has been made possible by the generous support of the following organizations and institutions.
 
-<p><img src="docs/assets/sponsors.jpg" width="750px;" alt=""/></p>
+<p><img src="docs/assets/sponsors.jpg" width="800px;" alt=""/></p>
 
 We welcome computational sponsorship to support the continued development of CoMLRL. If you are interested in sponsoring this project, please contact us.
 <a href="mailto:liu.shuo2@northeastern.edu"><img src="docs/assets/email.svg" width="22px" alt="Email"/></a>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import wandb
@@ -13,6 +13,63 @@ Formatter = Callable[[Dict[str, Any]], str]
 
 class ActorCriticTrainerBase:
     """Shared training utilities for actor-critic style trainers."""
+
+    def _infer_model_name(self, source: Any) -> Optional[str]:
+        if source is None:
+            return None
+        if isinstance(source, str):
+            return source
+        base = getattr(source, "model", source)
+        config = getattr(base, "config", None)
+        if config is not None:
+            name = getattr(config, "_name_or_path", None) or getattr(
+                config, "model_type", None
+            )
+            if name:
+                return str(name)
+        return base.__class__.__name__
+
+    def _resolve_model_sources(
+        self,
+        *,
+        kind: str,
+        model: Optional[Any],
+        models: Optional[Sequence[Any]],
+        expected_count: int,
+        expected_label: Optional[str] = None,
+    ) -> Tuple[List[Any], Optional[str]]:
+        if model is not None and models is not None:
+            raise ValueError(f"Cannot provide both model and {kind}.")
+        if model is None and models is None:
+            raise ValueError(f"Either model or {kind} must be provided.")
+        if expected_count < 1:
+            raise ValueError("expected_count must be >= 1.")
+
+        if models is not None:
+            if isinstance(models, (str, bytes)) or not isinstance(models, Sequence):
+                raise ValueError(f"{kind} must be a non-empty sequence.")
+            sources = list(models)
+            if len(sources) != expected_count:
+                label = expected_label or f"num_agents ({expected_count})"
+                raise ValueError(f"{kind} length ({len(sources)}) must match {label}.")
+        else:
+            sources = [model] * expected_count
+
+        if any(src is None for src in sources):
+            raise ValueError(f"{kind} entries must be non-null.")
+
+        model_name = self._infer_model_name(sources[0]) if sources else None
+        return sources, model_name
+
+    def _filter_model_kwargs(self, cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        torch_dtype = None
+        if isinstance(cfg, dict):
+            torch_dtype = cfg.get("torch_dtype") or cfg.get("dtype")
+        if torch_dtype is None:
+            model_cfg = getattr(self, "model_config", None)
+            if isinstance(model_cfg, dict):
+                torch_dtype = model_cfg.get("torch_dtype") or model_cfg.get("dtype")
+        return {"torch_dtype": torch_dtype} if torch_dtype is not None else {}
 
     def _setup_formatters(
         self, formatters: Optional[Union[Formatter, Sequence[Formatter]]]
@@ -151,17 +208,8 @@ class ActorCriticTrainerBase:
             ).float()
             if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
                 metrics["value_target_mean"] = float(target_vals.mean().item())
-        elif (
-            self._include_value_target_fallback()
-            and returns.numel() > 0
-            and torch.isfinite(returns).all()
-        ):
-            metrics["value_target_mean"] = float(returns.mean().item())
 
         return metrics
-
-    def _include_value_target_fallback(self) -> bool:
-        return True
 
     def _iter_dataloader(self, dataloader, epoch: int, total_epochs: int):
         if getattr(self, "verbose", True):
