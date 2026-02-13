@@ -7,8 +7,8 @@ weight: 3
 
 ## Version 1.3.6
 
-- Fixed the bug of loading heterogeneous models and reform the loading logics
-- Reconstruct the docs
+- Fixed critical bug of loading heterogeneous models and reform the model loading logics
+- Polish the docs
 
 ## Version 1.3.5
 
