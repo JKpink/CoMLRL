@@ -14,7 +14,7 @@ from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
-from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizer
+from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
 from .ac_base import ActorCriticTrainerBase
 from .iac import RolloutSample
 
@@ -85,8 +85,11 @@ class MAACTrainer(ActorCriticTrainerBase):
 
     def __init__(
         self,
-        model: Optional[Union[str, PreTrainedModel]] = None,
-        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        agent_model: Optional[Union[str, PreTrainedModel]] = None,
+        critic_model: Optional[Union[str, PreTrainedModel]] = None,
+        tokenizer: Optional[
+            Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
+        ] = None,
         reward_func: Optional[RewardFunc] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Formatter, Sequence[Formatter]]] = None,
@@ -107,22 +110,24 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.args = args if args is not None else MAACConfig()
         if reward_func is None or not callable(reward_func):
             raise ValueError("reward_func must be a callable.")
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided.")
+        if agent_model is None and agents is None:
+            raise ValueError("Either agent_model or agents must be provided.")
         if (
             agents is None
             and self.args.num_agents > 1
-            and isinstance(model, PreTrainedModel)
+            and isinstance(agent_model, PreTrainedModel)
         ):
             raise ValueError(
-                "Multi-agent MAAC requires `model` to be a pretrained identifier string."
+                "Multi-agent MAAC requires `agent_model` to be a pretrained identifier string."
             )
         if agents is not None and tokenizer is None:
             raise ValueError("Tokenizer must be provided when using agents.")
         if self.args.num_turns > 1 and external_transition is None:
             raise ValueError("Multi-turn MAAC requires an external_transition.")
-        if critics is None:
-            raise ValueError("critics must be provided for MAAC.")
+        if critics is None and critic_model is None:
+            raise ValueError(
+                "Either critic_model or critics must be provided for MAAC."
+            )
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
@@ -132,19 +137,26 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.tokenizer = resolve_tokenizer(model, tokenizer, agents)
+        tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
+        if isinstance(tokenizers, list):
+            self.tokenizers = tokenizers
+            self.tokenizer = tokenizers[0] if tokenizers else None
+        else:
+            self.tokenizers = [tokenizers] * self.args.num_agents
+            self.tokenizer = tokenizers
         self.external_transition = external_transition
 
-        self.agent_models: List[CausalLMWithValueHead] = []
-        actor_sources, self.agent_model_name = resolve_model_sources(
+        self.agents: List[CausalLMWithValueHead] = []
+        actor_sources, _agent_name = resolve_model_sources(
             kind="agents",
-            model=model,
+            model=agent_model,
             models=agents,
             expected_count=self.args.num_agents,
+            model_label="agent_model",
         )
         for actor_source in actor_sources:
             if actor_source is None:
-                raise ValueError("model must be provided for MAAC.")
+                raise ValueError("agent_model must be provided for MAAC.")
             if isinstance(actor_source, CausalLMWithValueHead):
                 agent_model = actor_source
             elif isinstance(actor_source, PreTrainedModel):
@@ -172,22 +184,22 @@ class MAACTrainer(ActorCriticTrainerBase):
                     value_head_hidden_dim=None,
                 )
             agent_model.to(self.device)
-            self.agent_models.append(agent_model)
+            self.agents.append(agent_model)
 
-        self.critic_model_name = None
-        critic_sources, self.critic_model_name = resolve_model_sources(
+        critic_sources, _critic_name = resolve_model_sources(
             kind="critics",
-            model=None,
+            model=critic_model,
             models=critics,
             expected_count=1,
             expected_label="1 critic",
+            model_label="critic_model",
         )
         critic_source = critic_sources[0]
         if isinstance(critic_source, CausalLMWithValueHead):
-            self.critic_model = critic_source
+            critic_model_instance = critic_source
         elif isinstance(critic_source, PreTrainedModel):
             base = critic_source
-            self.critic_model = CausalLMWithValueHead(
+            critic_model_instance = CausalLMWithValueHead(
                 base_model=base,
                 attach_value_head=True,
                 value_head_hidden_dim=self.model_config.get(
@@ -206,18 +218,22 @@ class MAACTrainer(ActorCriticTrainerBase):
                 raise ValueError(
                     f"Failed to load critic model from identifier '{critic_source}'."
                 ) from exc
-            self.critic_model = CausalLMWithValueHead(
+            critic_model_instance = CausalLMWithValueHead(
                 base_model=base,
                 attach_value_head=True,
                 value_head_hidden_dim=self.model_config.get(
                     "critic_value_head_hidden_dim"
                 ),
             )
-        self.critic_model.to(self.device)
+        critic_model_instance.to(self.device)
+        self.critics: List[CausalLMWithValueHead] = [critic_model_instance]
 
-        apply_tokenizer_specials(
-            self.tokenizer, [*self.agent_models, self.critic_model]
-        )
+        if self.tokenizers and len(self.tokenizers) == len(self.agents):
+            for idx, tok in enumerate(self.tokenizers):
+                apply_tokenizer_specials(tok, [self.agents[idx]])
+            apply_tokenizer_specials(self.tokenizers[0], [self.critics[0]])
+        else:
+            apply_tokenizer_specials(self.tokenizer, [*self.agents, self.critics[0]])
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
@@ -225,7 +241,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self._reward_signature = inspect.Signature()
 
         self.agent_optimizers = []
-        for agent_model in self.agent_models:
+        for agent_model in self.agents:
             optimizer = torch.optim.AdamW(
                 agent_model.parameters(),
                 lr=self.args.agent_learning_rate,
@@ -233,7 +249,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.agent_optimizers.append(optimizer)
 
         self.critic_optimizer = torch.optim.AdamW(
-            self.critic_model.parameters(),
+            self.critics[0].parameters(),
             lr=self.args.critic_learning_rate,
         )
 
@@ -283,7 +299,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         )
         if isinstance(sections, dict):
             dataset_section = sections.get("dataset") or {}
-            model_section = sections.get("model") or {}
             output_section = sections.get("output") or {}
             external_section = sections.get("external") or {}
             trainer_section = sections.get("trainer") or {}
@@ -291,7 +306,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             config_dict.update(
                 {
                     "dataset": dataset_section,
-                    "model": model_section,
                     "output": output_section,
                     "external": external_section,
                     "trainer": trainer_section,
@@ -363,11 +377,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         return base + "\n\n" + "\n\n".join(action_lines)
 
     def _critic_value_from_text(self, critic_input: str) -> Dict[str, Any]:
-        encoded = self._encode_prompt(critic_input)
+        encoded = self._encode_prompt(critic_input, tokenizer=self._get_tokenizer(0))
         ids = encoded["input_ids"]
         mask = encoded["attention_mask"]
         prompt_len = ids.size(1)
-        value = self._value_on_prompt_only(self.critic_model, ids, mask, prompt_len)
+        value = self._value_on_prompt_only(self.critics[0], ids, mask, prompt_len)
         return {
             "critic_input": critic_input,
             "input_ids": ids,
@@ -376,8 +390,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             "value": value,
         }
 
-    def _generate(self, agent_model, prompt: str) -> Dict[str, Any]:
-        encoded_prompt = self._encode_prompt(prompt)
+    def _generate(self, agent_model, prompt: str, agent_idx: int) -> Dict[str, Any]:
+        encoded_prompt = self._encode_prompt(prompt, agent_idx=agent_idx)
         prompt_input_ids = encoded_prompt["input_ids"]
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
@@ -401,7 +415,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise RuntimeError("Model produced an empty completion during rollout.")
 
         response_tokens = sequences[:, prompt_len:]
-        pad_id = self.tokenizer.pad_token_id
+        tokenizer = self._get_tokenizer(agent_idx)
+        pad_id = tokenizer.pad_token_id
         response_lens: List[int] = []
         completion_texts: List[str] = []
         for seq in response_tokens:
@@ -411,7 +426,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
             response_lens.append(resp_len)
             completion_texts.append(
-                self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
+                tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
             )
 
         return {
@@ -433,9 +448,9 @@ class MAACTrainer(ActorCriticTrainerBase):
         rollout_data: List[Dict[str, Any]] = []
         num_ret = int(self.args.num_generations)
 
-        for agent_idx, agent_model in enumerate(self.agent_models):
+        for agent_idx, agent_model in enumerate(self.agents):
             prompt = self._resolve_turn_prompt(item, agent_idx)
-            gen = self._generate(agent_model, prompt)
+            gen = self._generate(agent_model, prompt, agent_idx)
             prompts.append(prompt)
             completions_per_agent.append(gen["completions"])
             rollout_data.append(
@@ -504,7 +519,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 reward_tensor = torch.tensor([reward], device=self.device)
 
                 logprob, _ = self._policy_eval(
-                    self.agent_models[agent_idx],
+                    self.agents[agent_idx],
                     seq.unsqueeze(0),
                     attn.unsqueeze(0),
                     data["prompt_len"],
@@ -525,7 +540,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     RolloutSample(
                         agent_idx=agent_idx,
                         prompt=data["prompt"],
-                        completion=self.tokenizer.decode(
+                        completion=self._get_tokenizer(agent_idx).decode(
                             seq[data["prompt_len"] : data["prompt_len"] + resp_len],
                             skip_special_tokens=True,
                         ),
@@ -607,9 +622,9 @@ class MAACTrainer(ActorCriticTrainerBase):
 
             completions_per_agent: List[List[str]] = []
             rollout_data: List[Dict[str, Any]] = []
-            for agent_idx, agent_model in enumerate(self.agent_models):
+            for agent_idx, agent_model in enumerate(self.agents):
                 prompt = turn_prompts[agent_idx]
-                gen = self._generate(agent_model, prompt)
+                gen = self._generate(agent_model, prompt, agent_idx)
                 completions_per_agent.append(gen["completions"])
                 rollout_data.append(
                     {
@@ -659,7 +674,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 reward_tensor = torch.tensor([reward_val], device=self.device)
 
                 logprob, _ = self._policy_eval(
-                    self.agent_models[agent_idx],
+                    self.agents[agent_idx],
                     seq.unsqueeze(0),
                     attn.unsqueeze(0),
                     data["prompt_len"],
@@ -815,7 +830,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         return response_log_probs.sum(dim=-1)
 
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
-        agent_model = self.agent_models[agent_idx]
+        agent_model = self.agents[agent_idx]
         agent_optimizer = self.agent_optimizers[agent_idx]
 
         actor_losses: List[torch.Tensor] = []
@@ -838,7 +853,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             joint_mask = sample.metadata["joint_attention_mask"].to(self.device)
             joint_len = int(sample.metadata["joint_prompt_len"])
             value = self._value_on_prompt_only(
-                self.critic_model, joint_ids, joint_mask, joint_len
+                self.critics[0], joint_ids, joint_mask, joint_len
             )
 
             old_value = sample.old_value.to(self.device, dtype=value.dtype)
@@ -939,17 +954,22 @@ class MAACTrainer(ActorCriticTrainerBase):
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
-        for agent_idx, actor in enumerate(self.agent_models):
+        for agent_idx, actor in enumerate(self.agents):
             agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
             os.makedirs(agent_dir, exist_ok=True)
             actor.model.save_pretrained(agent_dir)
         critic_dir = os.path.join(output_dir, "critic")
         os.makedirs(critic_dir, exist_ok=True)
-        self.critic_model.model.save_pretrained(critic_dir)
-        if self.critic_model.value_head is not None:
+        self.critics[0].model.save_pretrained(critic_dir)
+        if self.critics[0].value_head is not None:
             torch.save(
-                self.critic_model.value_head.state_dict(),
+                self.critics[0].value_head.state_dict(),
                 os.path.join(critic_dir, "value_head.pt"),
             )
-        if self.tokenizer is not None:
+        if self.tokenizers:
+            for idx, tok in enumerate(self.tokenizers):
+                agent_dir = os.path.join(output_dir, f"agent_{idx}")
+                os.makedirs(agent_dir, exist_ok=True)
+                tok.save_pretrained(agent_dir)
+        elif self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)

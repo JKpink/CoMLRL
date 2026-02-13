@@ -36,20 +36,33 @@ def resolve_model_sources(
     models: Optional[Sequence[Any]],
     expected_count: int,
     expected_label: Optional[str] = None,
+    model_label: str = "model",
 ) -> Tuple[List[Any], Optional[str]]:
     if model is not None and models is not None:
-        is_name_list = (
-            isinstance(models, Sequence)
-            and not isinstance(models, (str, bytes))
-            and all(isinstance(src, str) for src in models)
+        is_sequence = isinstance(models, Sequence) and not isinstance(
+            models, (str, bytes)
         )
-        if not is_name_list or len(models) != expected_count:
+        if not is_sequence:
             label = expected_label or f"num_agents ({expected_count})"
             raise ValueError(
-                f"Cannot provide both model and {kind} unless {kind} is a list of {label} model names."
+                f"Cannot provide both {model_label} and {kind} unless {kind} is a list of {label} model names."
+            )
+        if len(models) != expected_count:
+            label = expected_label or f"num_agents ({expected_count})"
+            raise ValueError(f"{kind} length ({len(models)}) must match {label}.")
+
+        model_name = infer_model_name(model)
+        agent_names = [infer_model_name(src) for src in models]
+        if model_name is None or any(name is None for name in agent_names):
+            raise ValueError(
+                f"Cannot verify consistency between {model_label} and {kind}; provide model names or omit one."
+            )
+        if not all(name == model_name for name in agent_names):
+            raise ValueError(
+                f"{model_label} and {kind} conflict: {model_name} != {agent_names}."
             )
     if model is None and models is None:
-        raise ValueError(f"Either model or {kind} must be provided.")
+        raise ValueError(f"Either {model_label} or {kind} must be provided.")
     if expected_count < 1:
         raise ValueError("expected_count must be >= 1.")
 
