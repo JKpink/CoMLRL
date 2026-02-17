@@ -5,10 +5,15 @@ weight: 3
 
 ---
 
-## Version 1.3.6
+## Version 1.3.7
 
-- Fixed critical bug of loading heterogeneous models and reform the model loading logics
-- Polish the docs
+- Remove the redundant sampling hyperparameters in algorithms.
+- Allow multi-gpu training with MP.
+
+## Latest Changes
+
+- Fixed critical bug of loading heterogeneous models and reform the model loading logics.
+- Polish the docs.
 
 ## Version 1.3.5
 
@@ -33,13 +38,13 @@ weight: 3
 
 ## Version 1.3.2
 
-- Fix wandb logging issue in MAGRPOTrainer
+- Fix wandb logging issue in MAGRPOTrainer.
 
 ## Version 1.3.1
 
-- Allow batch training in MAGRPOTrainer, IACTrainer and MAACTrainer
-- Allow multi-turn training in IACTrainer and MAACTrainer
-- Change the x-axis from data_step to env_step
+- Allow batch training in MAGRPOTrainer, IACTrainer and MAACTrainer.
+- Allow multi-turn training in IACTrainer and MAACTrainer.
+- Change the x-axis from data_step to env_step.
 
 ## Version 1.3.0
 

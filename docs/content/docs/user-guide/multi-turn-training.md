@@ -1,6 +1,6 @@
 ---
-title: Multi-Turn Training
-linkTitle: Multi-Turn Training
+title: Multi-Turn Interaction
+linkTitle: Multi-Turn Interaction
 weight: 5
 math: true
 ---
