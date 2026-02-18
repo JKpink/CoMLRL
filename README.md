@@ -60,7 +60,7 @@ cd CoMLRL && pip install -e .
     - [StrBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/str_build) - Building structures based on string blueprints.
     - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
 
-<img src="docs/assets/demo.gif" width="600px;" alt=""/>
+<img src="docs/assets/demo.gif" width="560px;" alt=""/>
 
 ## Usage
 

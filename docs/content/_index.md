@@ -83,5 +83,5 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 
 
 <p align="center">
-  <img src="/img/demo.gif" width="800px;" alt=""/>
+  <img src="/img/demo.gif" width="700px;" alt=""/>
 </p>
