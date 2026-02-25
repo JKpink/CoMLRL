@@ -97,9 +97,10 @@ class IACConfig:
                 raise ValueError(
                     "parallel_training='mp' requires explicit agent_devices."
                 )
-            if self.critic_devices is None:
+            if self.use_separate_critic and self.critic_devices is None:
                 raise ValueError(
-                    "parallel_training='mp' requires explicit critic_devices."
+                    "parallel_training='mp' requires explicit critic_devices when "
+                    "use_separate_critic=True."
                 )
         self.parallel_training = mode
 
