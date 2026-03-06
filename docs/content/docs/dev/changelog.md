@@ -8,11 +8,11 @@ weight: 3
 ## Version 1.3.7
 
 - Remove the redundant sampling hyperparameters in algorithms.
-- Allow multi-gpu training with MP.
+- Allow multi-gpu training with MP (see results at PR [#62](https://github.com/OpenMLRL/CoMLRL/pull/62)).
 
-## Latest Changes
+## Version 1.3.6
 
-- Fixed critical bug of loading heterogeneous models and reform the model loading logics.
+- Fixed critical bug of loading heterogeneous models and reform the model loading logics (see results at PR [#60](https://github.com/OpenMLRL/CoMLRL/pull/60))
 - Polish the docs.
 
 ## Version 1.3.5
