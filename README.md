@@ -19,6 +19,8 @@
 
 **Co**operative **M**ulti-**L**LM **R**einforcement **L**earning (**CoMLRL**) is an open-source library for training multiple LLMs to collaborate using Multi-Agent Reinforcement Learning (MARL). It provides implementations of various MARL algorithms for LLM collaboration and support for different environments and benchmarks.
 
+<img src="docs/assets/demo.gif" width="500px;" alt=""/>
+
 ## Installation
 
 CoMLRL can be installed via PyPI, conda-forge, or from source:
@@ -59,8 +61,6 @@ cd CoMLRL && pip install -e .
   - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
     - [StrBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/str_build) - Building structures based on string blueprints.
     - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
-
-<img src="docs/assets/demo.gif" width="500px;" alt=""/>
 
 ## Usage
 
