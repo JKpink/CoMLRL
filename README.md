@@ -131,7 +131,6 @@ Please cite the following papers if you find this library useful in your researc
   pages={32150--32158},
   year={2026}
 }
-}
 
 @article{liu2026learndecllmcollabmaac,
   title   = {Learning Decentralized LLM Collaboration with Multi-Agent Actor Critic},
