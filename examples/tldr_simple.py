@@ -176,6 +176,7 @@ def main() -> None:
         num_agents=2,
         num_turns=1,
         agent_devices=args.agent_devices,
+        parallel_training="mp" if args.agent_devices else "none",
     )
 
     reward_fn = partial(
