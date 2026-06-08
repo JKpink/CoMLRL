@@ -18,10 +18,9 @@ from typing import List
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+# (no PEFT — IACTrainer handles ValueHead internally)
 
 from comlrl.trainers.actor_critic import IACConfig, IACTrainer
-from comlrl.models.actor_critic import CausalLMWithValueHead
 
 
 # ─── Reward (unchanged from original) ─────────────────────────
@@ -108,8 +107,8 @@ def rollout_metrics(rollouts):
 
 # ─── QLoRA model loading (NEW) ───────────────────────────────
 
-def load_qlora_agent(model_name: str, lora_r: int = 8, lora_alpha: int = 16):
-    """Load a model with 4-bit QLoRA + LoRA + ValueHead."""
+def load_qlora_agent(model_name: str, gpu: int = 0):
+    """Load a model with 4-bit QLoRA on a specific GPU. IACTrainer adds ValueHead."""
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -120,28 +119,13 @@ def load_qlora_agent(model_name: str, lora_r: int = 8, lora_alpha: int = 16):
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
-        device_map="auto",
+        device_map={"": gpu},  # force to specific GPU
         trust_remote_code=True,
         attn_implementation="sdpa",
     )
 
-    # Required for LoRA on 4-bit
-    model = prepare_model_for_kbit_training(model)
-
-    lora_config = LoraConfig(
-        r=lora_r,
-        lora_alpha=lora_alpha,
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-    )
-    model = get_peft_model(model, lora_config)
-
-    # Wrap with ValueHead (CoMLRL's actor-critic)
-    model = CausalLMWithValueHead(model, attach_value_head=True)
-
-    print(f"Loaded QLoRA agent: {model_name} (r={lora_r})")
+    # IACTrainer will internally wrap with CausalLMWithValueHead
+    print(f"Loaded QLoRA agent: {model_name} (4-bit, GPU {gpu})")
     return model
 
 
@@ -179,10 +163,11 @@ def main() -> None:
     dataset = dataset.select(range(usable))
     print(f"Dataset: {usable} samples")
 
-    # Load TWO agents with QLoRA + LoRA + ValueHead
+    # Load TWO agents, each on its own GPU
+    num_gpus = torch.cuda.device_count()
     agents = [
-        load_qlora_agent(args.model_name, lora_r=args.lora_r, lora_alpha=args.lora_alpha)
-        for _ in range(2)
+        load_qlora_agent(args.model_name, gpu=i % num_gpus)
+        for i in range(2)
     ]
 
     config = IACConfig(
