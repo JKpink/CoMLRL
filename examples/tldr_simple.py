@@ -117,6 +117,9 @@ def load_agent_full(model_name: str):
         attn_implementation="sdpa",
     )
 
+    # Gradient checkpointing saves ~60% activation memory during backward
+    model.gradient_checkpointing_enable()
+
     # Wrap with ValueHead — both base model and ValueHead are trainable
     model = CausalLMWithValueHead(model, attach_value_head=True)
 
@@ -136,8 +139,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=int, default=3)
     parser.add_argument("--agent-learning-rate", type=float, default=1e-4)
     parser.add_argument("--value-loss-coef", type=float, default=0.6)
-    parser.add_argument("--rollout-buffer-size", type=int, default=8)
-    parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--rollout-buffer-size", type=int, default=4)
+    parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--agent-devices", type=str, nargs="*", default=None,
