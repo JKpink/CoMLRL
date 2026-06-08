@@ -21,7 +21,7 @@ import torch
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from comlrl.trainers.actor_critic import IACConfig, IACTrainer
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 
 # ─── Code cleanup & execution ────────────────────────────────
@@ -204,8 +204,8 @@ def parse_args():
     p.add_argument("--num-train-epochs", type=int, default=20)
     p.add_argument("--agent-lr", type=float, default=5e-6)
     p.add_argument("--value-loss-coef", type=float, default=0.6)
-    p.add_argument("--rollout-buffer-size", type=int, default=4)
-    p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument("--rollout-buffer-size", type=int, default=2)
+    p.add_argument("--max-new-tokens", type=int, default=64)
     p.add_argument("--temperature", type=float, default=0.6)
     return p.parse_args()
 
@@ -236,21 +236,21 @@ def main():
         agents.append(model)
         print(f"Agent {i} loaded on GPU {gpu}")
 
-    config = IACConfig(
+    config = MAGRPOConfig(
         num_train_epochs=args.num_train_epochs,
         agent_learning_rate=args.agent_lr,
-        value_loss_coef=args.value_loss_coef,
+        num_generations=2,  # group size for relative advantage
         rollout_buffer_size=args.rollout_buffer_size,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=0.9,
-        use_separate_critic=False,
         num_agents=2,
         num_turns=1,
-        agent_devices=[0, 1] if num_gpus >= 2 else "cpu",
+        parallel_training="mp" if num_gpus >= 2 else "none",
+        agent_devices=["cuda:0", "cuda:1"] if num_gpus >= 2 else "cpu",
     )
 
-    trainer = IACTrainer(
+    trainer = MAGRPOTrainer(
         agents=agents,
         tokenizer=tokenizer,
         reward_func=execution_reward,
