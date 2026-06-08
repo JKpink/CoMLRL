@@ -24,8 +24,7 @@ long_description = short_description
 
 setup(
     name="comlrl",
-    use_scm_version=True,
-    setup_requires=["setuptools-scm"],
+    version="0.1.0",
     packages=find_packages(),
     python_requires=">=3.10",
     install_requires=core_requires,
